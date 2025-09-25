@@ -1,9 +1,158 @@
+<?php
+session_start();
+
+// データベース接続設定
+function getDBConnection() {
+    $host = 'localhost';
+    $dbname = 'schedule_app';
+    $username = 'your_username';
+    $password = 'your_password';
+    
+    try {
+        $pdo = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8", $username, $password);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        return $pdo;
+    } catch (PDOException $e) {
+        die("データベース接続エラー: " . $e->getMessage());
+    }
+}
+
+// メッセージ管理
+$message = '';
+$messageType = '';
+
+if (isset($_SESSION['message'])) {
+    $message = $_SESSION['message'];
+    $messageType = $_SESSION['message_type'];
+    unset($_SESSION['message']);
+    unset($_SESSION['message_type']);
+}
+
+function setMessage($msg, $type) {
+    $_SESSION['message'] = $msg;
+    $_SESSION['message_type'] = $type;
+}
+
+// ユーザー登録処理
+if ($_POST['action'] == 'register') {
+    $username = $_POST['username'];
+    $email = $_POST['email'];
+    $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
+    
+    $pdo = getDBConnection();
+    
+    // メール重複チェック
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM users WHERE email = ?");
+    $stmt->execute([$email]);
+    
+    if ($stmt->fetchColumn() > 0) {
+        setMessage('このメールアドレスは既に使用されています', 'error');
+    } else {
+        // ユーザー登録
+        $stmt = $pdo->prepare("INSERT INTO users (username, email, password) VALUES (?, ?, ?)");
+        if ($stmt->execute([$username, $email, $password])) {
+            setMessage('登録完了！ログインしてください', 'success');
+        } else {
+            setMessage('登録に失敗しました', 'error');
+        }
+    }
+    header('Location: ' . $_SERVER['PHP_SELF']);
+    exit;
+}
+
+// ログイン処理
+if ($_POST['action'] == 'login') {
+    $email = $_POST['email'];
+    $password = $_POST['password'];
+    
+    $pdo = getDBConnection();
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE email = ?");
+    $stmt->execute([$email]);
+    $user = $stmt->fetch();
+    
+    if ($user && password_verify($password, $user['password'])) {
+        $_SESSION['user_id'] = $user['id'];
+        $_SESSION['username'] = $user['username'];
+        $_SESSION['email'] = $user['email'];
+        setMessage('ログイン成功！', 'success');
+    } else {
+        setMessage('メールアドレスまたはパスワードが間違っています', 'error');
+    }
+    header('Location: ' . $_SERVER['PHP_SELF']);
+    exit;
+}
+
+// ログアウト処理
+if (isset($_GET['action']) && $_GET['action'] == 'logout') {
+    session_destroy();
+    session_start();
+    setMessage('ログアウトしました', 'success');
+    header('Location: ' . $_SERVER['PHP_SELF']);
+    exit;
+}
+
+// スケジュール追加処理
+if ($_POST['action'] == 'add_schedule') {
+    $time = $_POST['time'];
+    $title = $_POST['title'];
+    $user_id = $_SESSION['user_id'];
+    
+    $pdo = getDBConnection();
+    $stmt = $pdo->prepare("INSERT INTO schedules (user_id, time, title, completed) VALUES (?, ?, ?, 0)");
+    if ($stmt->execute([$user_id, $time, $title])) {
+        setMessage('スケジュールを追加しました', 'success');
+    } else {
+        setMessage('スケジュールの追加に失敗しました', 'error');
+    }
+    header('Location: ' . $_SERVER['PHP_SELF']);
+    exit;
+}
+
+// スケジュール完了切り替え処理
+if (isset($_GET['action']) && $_GET['action'] == 'toggle_complete') {
+    $schedule_id = $_GET['id'];
+    $user_id = $_SESSION['user_id'];
+    
+    $pdo = getDBConnection();
+    $stmt = $pdo->prepare("UPDATE schedules SET completed = NOT completed WHERE id = ? AND user_id = ?");
+    $stmt->execute([$schedule_id, $user_id]);
+    
+    header('Location: ' . $_SERVER['PHP_SELF']);
+    exit;
+}
+
+// スケジュール削除処理
+if (isset($_GET['action']) && $_GET['action'] == 'delete_schedule') {
+    $schedule_id = $_GET['id'];
+    $user_id = $_SESSION['user_id'];
+    
+    $pdo = getDBConnection();
+    $stmt = $pdo->prepare("DELETE FROM schedules WHERE id = ? AND user_id = ?");
+    $stmt->execute([$schedule_id, $user_id]);
+    
+    header('Location: ' . $_SERVER['PHP_SELF']);
+    exit;
+}
+
+// スケジュール取得
+$schedules = [];
+if (isset($_SESSION['user_id'])) {
+    $pdo = getDBConnection();
+    $stmt = $pdo->prepare("SELECT * FROM schedules WHERE user_id = ? ORDER BY time ASC");
+    $stmt->execute([$_SESSION['user_id']]);
+    $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+// 現在時刻を取得
+$currentTime = date('H:i');
+?>
+
 <!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>スケジュール</title>
+    <title>スケジュール管理システム</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -42,6 +191,7 @@
             border: 1px solid #ddd;
             border-radius: 5px;
             font-size: 16px;
+            box-sizing: border-box;
         }
         
         button {
@@ -111,6 +261,9 @@
             padding: 8px 16px;
             width: auto;
             margin: 0;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
         }
         
         .logout-btn:hover {
@@ -158,6 +311,7 @@
 
         .schedule-list {
             list-style: none;
+            padding: 0;
         }
 
         .schedule-item {
@@ -202,6 +356,9 @@
             border-radius: 3px;
             cursor: pointer;
             font-size: 12px;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
         }
 
         .btn-complete {
@@ -246,266 +403,99 @@
 <body>
     <div class="container">
         <!-- メッセージエリア -->
-        <div id="message"></div>
+        <?php if ($message): ?>
+        <div class="message <?php echo $messageType; ?>">
+            <?php echo htmlspecialchars($message); ?>
+        </div>
+        <?php endif; ?>
         
-        <!-- ログインフォーム -->
-        <div id="login-form">
-            <h1>スケジュール</h1>
-            <form id="loginForm">
+        <?php if (!isset($_SESSION['user_id'])): ?>
+            <?php if (!isset($_GET['register'])): ?>
+            <!-- ログインフォーム -->
+            <h1>スケジュール管理システム</h1>
+            <form method="POST">
+                <input type="hidden" name="action" value="login">
                 <div class="form-group">
                     <label>メールアドレス:</label>
-                    <input type="email" id="login-email" required>
+                    <input type="email" name="email" required>
                 </div>
                 <div class="form-group">
                     <label>パスワード:</label>
-                    <input type="password" id="login-password" required>
+                    <input type="password" name="password" required>
                 </div>
                 <button type="submit">ログイン</button>
             </form>
             <div class="toggle-link">
-                <a href="#" onclick="showRegister()">新規登録</a>
+                <a href="?register=1">新規登録</a>
             </div>
-        </div>
-        
-        <!-- 登録フォーム -->
-        <div id="register-form" class="hidden">
+            <?php else: ?>
+            <!-- 登録フォーム -->
             <h1>新規登録</h1>
-            <form id="registerForm">
+            <form method="POST">
+                <input type="hidden" name="action" value="register">
                 <div class="form-group">
                     <label>ユーザー名:</label>
-                    <input type="text" id="register-username" required>
+                    <input type="text" name="username" required>
                 </div>
                 <div class="form-group">
                     <label>メールアドレス:</label>
-                    <input type="email" id="register-email" required>
+                    <input type="email" name="email" required>
                 </div>
                 <div class="form-group">
                     <label>パスワード:</label>
-                    <input type="password" id="register-password" required>
+                    <input type="password" name="password" required>
                 </div>
                 <button type="submit">登録</button>
             </form>
             <div class="toggle-link">
-                <a href="#" onclick="showLogin()">ログイン画面に戻る</a>
+                <a href="<?php echo $_SERVER['PHP_SELF']; ?>">ログイン画面に戻る</a>
             </div>
-        </div>
-        
+            <?php endif; ?>
+        <?php else: ?>
         <!-- スケジュール管理画面 -->
-        <div id="schedule-app" class="hidden">
-            <div class="user-header">
-                <div class="user-info">
-                    ようこそ、<strong id="current-username"></strong>さん
-                </div>
-                <button class="logout-btn" onclick="logout()">ログアウト</button>
+        <div class="user-header">
+            <div class="user-info">
+                ようこそ、<strong><?php echo htmlspecialchars($_SESSION['username']); ?></strong>さん
             </div>
-            
-            <h1>1日のスケジュール管理</h1>
-            
-            <div class="add-form">
-                <form id="scheduleForm">
-                    <div class="form-row">
-                        <input type="time" id="taskTime" required>
-                        <input type="text" id="taskTitle" placeholder="予定を入力" required>
-                        <button type="submit">追加</button>
-                    </div>
-                </form>
-            </div>
-
-            <ul class="schedule-list" id="scheduleList">
-                <li class="empty">予定がありません</li>
-            </ul>
+            <a href="?action=logout" class="logout-btn">ログアウト</a>
         </div>
-    </div>
+        
+        <h1>1日のスケジュール管理</h1>
+        
+        <div class="add-form">
+            <form method="POST">
+                <input type="hidden" name="action" value="add_schedule">
+                <div class="form-row">
+                    <input type="time" name="time" value="<?php echo $currentTime; ?>" required>
+                    <input type="text" name="title" placeholder="予定を入力" required>
+                    <button type="submit">追加</button>
+                </div>
+            </form>
+        </div>
 
-    <script>
-        // ユーザー管理
-        let users = JSON.parse(localStorage.getItem('users') || '[]');
-        let currentUser = null;
-        
-        // スケジュール管理
-        let schedules = [];
-        let idCounter = 1;
-        
-        // 画面切り替え
-        function showLogin() {
-            document.getElementById('login-form').classList.remove('hidden');
-            document.getElementById('register-form').classList.add('hidden');
-            document.getElementById('schedule-app').classList.add('hidden');
-            clearMessage();
-        }
-        
-        function showRegister() {
-            document.getElementById('login-form').classList.add('hidden');
-            document.getElementById('register-form').classList.remove('hidden');
-            clearMessage();
-        }
-        
-        function showScheduleApp() {
-            document.getElementById('login-form').classList.add('hidden');
-            document.getElementById('register-form').classList.add('hidden');
-            document.getElementById('schedule-app').classList.remove('hidden');
-            
-            document.getElementById('current-username').textContent = currentUser.username;
-            loadUserSchedules();
-        }
-        
-        // メッセージ表示
-        function showMessage(message, type) {
-            document.getElementById('message').innerHTML = 
-                `<div class="message ${type}">${message}</div>`;
-        }
-        
-        function clearMessage() {
-            document.getElementById('message').innerHTML = '';
-        }
-        
-        // ログイン処理
-        document.getElementById('loginForm').onsubmit = function(e) {
-            e.preventDefault();
-            
-            const email = document.getElementById('login-email').value;
-            const password = document.getElementById('login-password').value;
-            
-            const user = users.find(u => u.email === email && u.password === password);
-            
-            if (user) {
-                currentUser = user;
-                showMessage('ログイン成功！', 'success');
-                setTimeout(() => {
-                    clearMessage();
-                    showScheduleApp();
-                }, 1000);
-            } else {
-                showMessage('メールアドレスまたはパスワードが間違っています', 'error');
-            }
-        };
-        
-        // 登録処理
-        document.getElementById('registerForm').onsubmit = function(e) {
-            e.preventDefault();
-            
-            const username = document.getElementById('register-username').value;
-            const email = document.getElementById('register-email').value;
-            const password = document.getElementById('register-password').value;
-            
-            // 重複チェック
-            if (users.find(u => u.email === email)) {
-                showMessage('このメールアドレスは既に使用されています', 'error');
-                return;
-            }
-            
-            // ユーザー追加
-            const newUser = { username, email, password };
-            users.push(newUser);
-            localStorage.setItem('users', JSON.stringify(users));
-            
-            showMessage('登録完了！ログインしてください', 'success');
-            document.getElementById('registerForm').reset();
-            setTimeout(showLogin, 1500);
-        };
-        
-        // ログアウト
-        function logout() {
-            saveUserSchedules();
-            currentUser = null;
-            schedules = [];
-            showMessage('ログアウトしました', 'success');
-            setTimeout(showLogin, 1000);
-        }
-        
-        // スケジュール管理機能
-        function loadUserSchedules() {
-            const userSchedulesKey = `schedules_${currentUser.email}`;
-            schedules = JSON.parse(localStorage.getItem(userSchedulesKey) || '[]');
-            if (schedules.length > 0) {
-                idCounter = Math.max(...schedules.map(s => s.id)) + 1;
-            }
-            displaySchedules();
-            setCurrentTime();
-        }
-        
-        function saveUserSchedules() {
-            if (currentUser) {
-                const userSchedulesKey = `schedules_${currentUser.email}`;
-                localStorage.setItem(userSchedulesKey, JSON.stringify(schedules));
-            }
-        }
-        
-        function displaySchedules() {
-            const list = document.getElementById('scheduleList');
-            
-            if (schedules.length === 0) {
-                list.innerHTML = '<li class="empty">予定がありません</li>';
-                return;
-            }
-
-            // 時間順にソート
-            const sortedSchedules = schedules.sort((a, b) => a.time.localeCompare(b.time));
-            
-            list.innerHTML = sortedSchedules.map(schedule => `
-                <li class="schedule-item ${schedule.completed ? 'completed' : ''}">
+        <ul class="schedule-list">
+            <?php if (empty($schedules)): ?>
+                <li class="empty">予定がありません</li>
+            <?php else: ?>
+                <?php foreach ($schedules as $schedule): ?>
+                <li class="schedule-item <?php echo $schedule['completed'] ? 'completed' : ''; ?>">
                     <div class="schedule-info">
-                        <div class="schedule-time">${schedule.time}</div>
-                        <div class="schedule-title">${schedule.title}</div>
+                        <div class="schedule-time"><?php echo htmlspecialchars($schedule['time']); ?></div>
+                        <div class="schedule-title"><?php echo htmlspecialchars($schedule['title']); ?></div>
                     </div>
                     <div class="schedule-actions">
-                        <button class="btn btn-complete" onclick="toggleComplete(${schedule.id})">
-                            ${schedule.completed ? '戻す' : '完了'}
-                        </button>
-                        <button class="btn btn-delete" onclick="deleteSchedule(${schedule.id})">削除</button>
+                        <a href="?action=toggle_complete&id=<?php echo $schedule['id']; ?>" class="btn btn-complete">
+                            <?php echo $schedule['completed'] ? '戻す' : '完了'; ?>
+                        </a>
+                        <a href="?action=delete_schedule&id=<?php echo $schedule['id']; ?>" 
+                           class="btn btn-delete" 
+                           onclick="return confirm('本当に削除しますか？')">削除</a>
                     </div>
                 </li>
-            `).join('');
-        }
-
-        function addSchedule(event) {
-            event.preventDefault();
-            
-            const time = document.getElementById('taskTime').value;
-            const title = document.getElementById('taskTitle').value;
-
-            schedules.push({
-                id: idCounter++,
-                time,
-                title,
-                completed: false
-            });
-
-            saveUserSchedules();
-            displaySchedules();
-            document.getElementById('scheduleForm').reset();
-            setCurrentTime();
-        }
-
-        function toggleComplete(id) {
-            const schedule = schedules.find(s => s.id === id);
-            if (schedule) {
-                schedule.completed = !schedule.completed;
-                saveUserSchedules();
-                displaySchedules();
-            }
-        }
-
-        function deleteSchedule(id) {
-            schedules = schedules.filter(s => s.id !== id);
-            saveUserSchedules();
-            displaySchedules();
-        }
-        
-        function setCurrentTime() {
-            const now = new Date();
-            const currentTime = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
-            document.getElementById('taskTime').value = currentTime;
-        }
-
-        // イベントリスナー設定
-        document.getElementById('scheduleForm').addEventListener('submit', addSchedule);
-        
-        // 初期データ（テスト用）
-        if (users.length === 0) {
-            users.push({ username: 'テストユーザー', email: 'test@test.com', password: '123' });
-            localStorage.setItem('users', JSON.stringify(users));
-        }
-    </script>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        </ul>
+        <?php endif; ?>
+    </div>
 </body>
 </html>
