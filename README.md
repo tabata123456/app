@@ -4,12 +4,13 @@ session_start();
 // データベース接続設定
 function getDBConnection() {
     $host = 'localhost';
+    $port = '8889'; // MAMPのデフォルトポート
     $dbname = 'schedule_app';
-    $username = 'your_username';
-    $password = 'your_password';
+    $username = 'root'; // MAMPのデフォルトユーザー名
+    $password = 'root'; // MAMPのデフォルトパスワード
     
     try {
-        $pdo = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8", $username, $password);
+        $pdo = new PDO("mysql:host=$host;port=$port;dbname=$dbname;charset=utf8", $username, $password);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         return $pdo;
     } catch (PDOException $e) {
@@ -34,7 +35,7 @@ function setMessage($msg, $type) {
 }
 
 // ユーザー登録処理
-if ($_POST['action'] == 'register') {
+if (isset($_POST['action']) && $_POST['action'] == 'register') {
     $username = $_POST['username'];
     $email = $_POST['email'];
     $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
@@ -61,7 +62,7 @@ if ($_POST['action'] == 'register') {
 }
 
 // ログイン処理
-if ($_POST['action'] == 'login') {
+if (isset($_POST['action']) && $_POST['action'] == 'login') {
     $email = $_POST['email'];
     $password = $_POST['password'];
     
@@ -92,7 +93,7 @@ if (isset($_GET['action']) && $_GET['action'] == 'logout') {
 }
 
 // スケジュール追加処理
-if ($_POST['action'] == 'add_schedule') {
+if (isset($_POST['action']) && $_POST['action'] == 'add_schedule') {
     $time = $_POST['time'];
     $title = $_POST['title'];
     $user_id = $_SESSION['user_id'];
@@ -412,7 +413,7 @@ $currentTime = date('H:i');
         <?php if (!isset($_SESSION['user_id'])): ?>
             <?php if (!isset($_GET['register'])): ?>
             <!-- ログインフォーム -->
-            <h1>スケジュール管理システム</h1>
+            <h1>スケジュール管理</h1>
             <form method="POST">
                 <input type="hidden" name="action" value="login">
                 <div class="form-group">
